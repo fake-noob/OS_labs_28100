@@ -4,6 +4,7 @@
 #include "user/user.h"
 #include "kernel/fcntl.h"
 #include "kernel/stat.h"
+#include "kernel/fs.h"
 
 // Parsed command representation
 #define EXEC  1
@@ -174,7 +175,6 @@ while(getcmd(buf, sizeof(buf)) >= 0){
       strcpy(cmd_hist[hist_count % MAX_HIST], buf);
       hist_count++;
     }
-    // ------------------------------
     
     char *cmd = buf;
     while (*cmd == ' ' || *cmd == '\t')
@@ -188,7 +188,8 @@ while(getcmd(buf, sizeof(buf)) >= 0){
       if(chdir(cmd+3) < 0)
         fprintf(2, "cannot cd %s\n", cmd+3);
     }
-    // ADDED: wait built-in command
+
+
     else if (cmd[0] == 'w' && cmd[1] == 'a' && cmd[2] == 'i' && cmd[3] == 't' && 
             (cmd[4] == ' ' || cmd[4] == '\n' || cmd[4] == '\0')) {
       while(wait(0) != -1)
