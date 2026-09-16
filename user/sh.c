@@ -157,18 +157,26 @@ main(void)
   }
 
   // Read and run input commands.
-  while (getcmd(buf, sizeof(buf)) >= 0) {
+while (getcmd(buf, sizeof(buf)) >= 0) {
     char *cmd = buf;
     while (*cmd == ' ' || *cmd == '\t')
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
+    
     if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd) - 1] = 0; // chop \n
       if (chdir(cmd + 3) < 0)
         fprintf(2, "cannot cd %s\n", cmd + 3);
-    } else {
+    } 
+    // ADDED: wait built-in command
+    else if (cmd[0] == 'w' && cmd[1] == 'a' && cmd[2] == 'i' && cmd[3] == 't' && 
+            (cmd[4] == ' ' || cmd[4] == '\n' || cmd[4] == '\0')) {
+      while(wait(0) != -1)
+        ; 
+    } 
+    else {
       if (fork1() == 0)
         runcmd(parsecmd(cmd));
       wait(0);
