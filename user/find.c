@@ -2,27 +2,51 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 #include "kernel/fs.h"
-#include "kernel/param.h"
 
-char*
-fmtname(char *path) {
-  static char buf[DIRSIZ+1];
-  char *p;
 
-  // Find last component of path
-  for(p = path+strlen(path); p >= path && *p != '/'; p--);
-  p++;
+int match(char*, char*);
+int matchhere(char*, char*);
+int matchstar(int, char*, char*);
 
-  // Return the name padded
-  if(strlen(p) >= DIRSIZ)
-    return p;
-  memmove(buf, p, strlen(p));
-  buf[strlen(p)] = 0;
-  return buf;
+int
+match(char *re, char *text)
+{
+  if(re[0] == '^')
+    return matchhere(re+1, text);
+  do{  // must look at empty string
+    if(matchhere(re, text))
+      return 1;
+  }while(*text++ != '\0');
+  return 0;
+}
+
+
+int matchhere(char *re, char *text)
+{
+  if(re[0] == '\0')
+    return 1;
+  if(re[1] == '*')
+    return matchstar(re[0], re+2, text);
+  if(re[0] == '$' && re[1] == '\0')
+    return *text == '\0';
+  if(*text!='\0' && (re[0]=='.' || re[0]==*text))
+    return matchhere(re+1, text+1);
+  return 0;
+}
+
+// matchstar: search for c*re at beginning of text
+int matchstar(int c, char *re, char *text)
+{
+  do{  // a * matches zero or more instances
+    if(matchhere(re, text))
+      return 1;
+  }while(*text!='\0' && (*text++==c || c=='.'));
+  return 0;
 }
 
 void
-find(char *path, char *target, int argc, char *argv[]) {
+find(char *path, char *target)
+{
   char buf[512], *p;
   int fd;
   struct dirent de;
@@ -39,38 +63,13 @@ find(char *path, char *target, int argc, char *argv[]) {
     return;
   }
 
-  // FIXED: Check for a match BEFORE the switch statement 
-  // so that both files AND directories can trigger a match.
-  if(strcmp(fmtname(path), target) == 0) {
-    if(argc > 3 && strcmp(argv[3], "-exec") == 0) {
-      char *exec_argv[MAXARG];
-      int exec_argc = 0;
-      
-      // Copy the command and ALL its arguments
-      for (int i = 4; i < argc; i++) {
-          exec_argv[exec_argc++] = argv[i];
-      }
-      
-      // Append the matched file path and null-terminate
-      exec_argv[exec_argc++] = path;
-      exec_argv[exec_argc] = 0;
-
-      if(fork() == 0) {
-        exec(exec_argv[0], exec_argv);
-        fprintf(2, "find: exec %s failed\n", exec_argv[0]);
-        exit(1);
-      } else {
-        wait(0);
-      }
-    } else {
-      // Standard find behavior (no -exec)
-      printf("%s\n", path);
-    }
-  }
-
   switch(st.type){
   case T_FILE:
-    // Match check is handled above, so nothing to do here.
+    // If the path itself is a file, check if it matches
+    // (This is an edge case if someone runs find directly on a file)
+    if(match(target, path)) {
+      printf("%s\n", path);
+    }
     break;
 
   case T_DIR:
@@ -81,18 +80,33 @@ find(char *path, char *target, int argc, char *argv[]) {
     strcpy(buf, path);
     p = buf+strlen(buf);
     *p++ = '/';
+    
+    // Read the directory contents
     while(read(fd, &de, sizeof(de)) == sizeof(de)){
       if(de.inum == 0)
         continue;
+      
+      // Do not recurse into . and ..
       if(strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
         continue;
+        
       memmove(p, de.name, DIRSIZ);
       p[DIRSIZ] = 0;
+      
       if(stat(buf, &st) < 0){
         printf("find: cannot stat %s\n", buf);
         continue;
       }
-      find(buf, target, argc, argv); 
+      
+      // FIXED: Using regex match() instead of strcmp()
+      if(match(target, de.name)){
+        printf("%s\n", buf);
+      }
+      
+      // If it's a directory, search inside it recursively
+      if(st.type == T_DIR){
+        find(buf, target);
+      }
     }
     break;
   }
@@ -102,10 +116,11 @@ find(char *path, char *target, int argc, char *argv[]) {
 int
 main(int argc, char *argv[])
 {
-  if(argc < 3){
-    fprintf(2, "usage: find path filename [-exec command ...]\n");
+  if(argc != 3){
+    fprintf(2, "usage: find <path> <target_regex>\n");
     exit(1);
   }
-  find(argv[1], argv[2], argc, argv);
+  
+  find(argv[1], argv[2]);
   exit(0);
 }
