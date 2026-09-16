@@ -14,6 +14,10 @@
 
 #define MAXARGS 10
 
+#define MAX_HIST 10
+char cmd_hist[MAX_HIST][128];
+int hist_count = 0;
+
 struct cmd {
   int type;
 };
@@ -164,27 +168,43 @@ main(void)
   }
 
   // Read and run input commands.
-while (getcmd(buf, sizeof(buf)) >= 0) {
+while(getcmd(buf, sizeof(buf)) >= 0){
+    // --- ADDED: Save to history ---
+    if (buf[0] != '\n' && buf[0] != '\0') {
+      strcpy(cmd_hist[hist_count % MAX_HIST], buf);
+      hist_count++;
+    }
+    // ------------------------------
+    
     char *cmd = buf;
     while (*cmd == ' ' || *cmd == '\t')
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
-    
-    if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
+      
+    if(cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' '){
       // Chdir must be called by the parent, not the child.
-      cmd[strlen(cmd) - 1] = 0; // chop \n
-      if (chdir(cmd + 3) < 0)
-        fprintf(2, "cannot cd %s\n", cmd + 3);
-    } 
+      cmd[strlen(cmd) - 1] = 0;  // chop \n
+      if(chdir(cmd+3) < 0)
+        fprintf(2, "cannot cd %s\n", cmd+3);
+    }
     // ADDED: wait built-in command
     else if (cmd[0] == 'w' && cmd[1] == 'a' && cmd[2] == 'i' && cmd[3] == 't' && 
             (cmd[4] == ' ' || cmd[4] == '\n' || cmd[4] == '\0')) {
       while(wait(0) != -1)
         ; 
+    }
+    // ADDED: history built-in command
+    else if (cmd[0] == 'h' && cmd[1] == 'i' && cmd[2] == 's' && cmd[3] == 't' && 
+             cmd[4] == 'o' && cmd[5] == 'r' && cmd[6] == 'y' && 
+            (cmd[7] == ' ' || cmd[7] == '\n' || cmd[7] == '\0')) {
+      int start = (hist_count > MAX_HIST) ? (hist_count - MAX_HIST) : 0;
+      for (int i = start; i < hist_count; i++) {
+        printf("%d: %s", i + 1, cmd_hist[i % MAX_HIST]);
+      }
     } 
     else {
-      if (fork1() == 0)
+      if(fork1() == 0)
         runcmd(parsecmd(cmd));
       wait(0);
     }
