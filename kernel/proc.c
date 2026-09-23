@@ -146,6 +146,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // SANDBOX INITIALIZATION
+  p->mask = 0;
+  p->pathname[0] = 0;
+
   return p;
 }
 
@@ -288,6 +292,10 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  // COPY SANDBOX STATE TO CHILD
+  np->mask = p->mask;
+  memmove(np->pathname, p->pathname, sizeof(p->pathname));
 
   pid = np->pid;
 

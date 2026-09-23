@@ -93,7 +93,7 @@ extern uint64 sys_chdir(void);
 extern uint64 sys_dup(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_sbrk(void);
-extern uint64 sys_pause(void);
+extern uint64 sys_sleep(void);
 extern uint64 sys_uptime(void);
 extern uint64 sys_open(void);
 extern uint64 sys_write(void);
@@ -102,7 +102,7 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
-extern uint64 sys_sync(void);
+extern uint64 sys_interpose(void); // Sandbox implementation
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -120,7 +120,7 @@ static uint64 (*syscalls[])(void) = {
   [SYS_dup]     = sys_dup,
   [SYS_getpid]  = sys_getpid,
   [SYS_sbrk]    = sys_sbrk,
-  [SYS_pause]   = sys_pause,
+  [SYS_pause]   = sys_sleep,
   [SYS_uptime]  = sys_uptime,
   [SYS_open]    = sys_open,
   [SYS_write]   = sys_write,
@@ -129,7 +129,7 @@ static uint64 (*syscalls[])(void) = {
   [SYS_link]    = sys_link,
   [SYS_mkdir]   = sys_mkdir,
   [SYS_close]   = sys_close,
-  [SYS_sync]    = sys_sync,
+  [SYS_interpose] = sys_interpose,
   // clang-format on
 };
 
@@ -141,6 +141,31 @@ syscall(void)
 
   num = p->trapframe->a7;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    
+    // --- SANDBOX LOGIC START ---
+    if (p->mask & (1 << num)) {
+      int allowed = 0;
+      if (num == SYS_open || num == SYS_exec) {
+        char path[MAXPATH];
+        if (argstr(0, path, MAXPATH) >= 0) {
+          // If pathname is empty, allow. If it is "-", it means block all paths.
+          if (p->pathname[0] == 0) {
+            allowed = 1; 
+          } else if (p->pathname[0] == '-' && p->pathname[1] == '\0') {
+            allowed = 0; 
+          } else if (strncmp(path, p->pathname, MAXPATH) == 0) {
+            allowed = 1; // Path matches allowed path
+          }
+        }
+      }
+      
+      if (!allowed) {
+        p->trapframe->a0 = -1;
+        return; // Block execution
+      }
+    }
+    // --- SANDBOX LOGIC END ---
+
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();

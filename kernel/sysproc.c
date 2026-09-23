@@ -5,7 +5,6 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
-#include "vm.h"
 
 uint64
 sys_exit(void)
@@ -13,7 +12,7 @@ sys_exit(void)
   int n;
   argint(0, &n);
   kexit(n);
-  return 0; // not reached
+  return 0;  // not reached
 }
 
 uint64
@@ -40,49 +39,34 @@ uint64
 sys_sbrk(void)
 {
   uint64 addr;
-  int t;
   int n;
 
   argint(0, &n);
-  argint(1, &t);
   addr = myproc()->sz;
-
-  if (t == SBRK_EAGER || n < 0) {
-    if (growproc(n) < 0) {
-      return -1;
-    }
-  } else {
-    // Lazily allocate memory for this process: increase its memory
-    // size but don't allocate memory. If the processes uses the
-    // memory, vmfault() will allocate it.
-    if (addr + n < addr)
-      return -1;
-    if (addr + n > TRAPFRAME)
-      return -1;
-    myproc()->sz += n;
-  }
+  if(growproc(n) < 0)
+    return -1;
   return addr;
 }
 
 uint64
-sys_pause(void)
+sys_sleep(void)
 {
   int n;
   uint ticks0;
 
   argint(0, &n);
-  if (n < 0)
+  if(n < 0)
     n = 0;
   acquire(&tickslock);
   ticks0 = ticks;
-  while (ticks - ticks0 < n) {
-    if (killed(myproc())) {
+  while(ticks - ticks0 < n){
+    if(killed(myproc())){
       release(&tickslock);
       return -1;
     }
-    sleep_prepare(&ticks);
+    sleep_prepare(&ticks); // 2026 API update
     release(&tickslock);
-    sleep();
+    sleep();               // 2026 API update
     acquire(&tickslock);
   }
   release(&tickslock);
@@ -109,4 +93,25 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_interpose(void)
+{
+    int mask;
+    char path[MAXPATH];
+    struct proc *p = myproc();
+
+    // Step 2a: Get the mask argument
+    argint(0, &mask);
+
+    // Step 2b: Get the allowed pathname argument
+    if(argstr(1, path, MAXPATH) < 0)
+        return -1;
+
+    // Step 2c: Store in proc struct using the correct 2026 variable names
+    p->mask = mask;
+    safestrcpy(p->pathname, path, MAXPATH);
+
+    return 0;
 }
