@@ -26,6 +26,7 @@ int pause(int);
 int uptime(void);
 int interpose(int mask, char *path); // Sandbox syscall
 int sync(void);                      // Added missing sync syscall
+int freemem(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

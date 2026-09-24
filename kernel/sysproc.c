@@ -120,3 +120,9 @@ sys_interpose(void)
 
   return 0;
 }
+
+uint64
+sys_freemem(void)
+{
+  return freemem();
+}

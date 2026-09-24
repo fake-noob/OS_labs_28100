@@ -214,7 +214,8 @@ UPROGS=\
 	$U/_sbtest\
 	$U/_sandbox\
 	$U/_attack\
-	$U/_secret
+	$U/_secret\
+	$U/_free
 
 
 
