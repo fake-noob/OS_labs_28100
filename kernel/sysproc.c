@@ -98,20 +98,25 @@ sys_uptime(void)
 uint64
 sys_interpose(void)
 {
-    int mask;
-    char path[MAXPATH];
-    struct proc *p = myproc();
+  int mask;
+  uint64 pathaddr;
+  char path[MAXPATH];
+  struct proc *p = myproc();
 
-    // Step 2a: Get the mask argument
-    argint(0, &mask);
+  argint(0, &mask);
+  argaddr(1, &pathaddr);
 
-    // Step 2b: Get the allowed pathname argument
-    if(argstr(1, path, MAXPATH) < 0)
-        return -1;
+  // 1. Monotonically increase the mask (a process can never un-sandbox itself)
+  p->mask |= mask;
 
-    // Step 2c: Store in proc struct using the correct 2026 variable names
-    p->mask = mask;
-    safestrcpy(p->pathname, path, MAXPATH);
+  // 2. Only allow setting the pathname if it hasn't been set yet
+  if (pathaddr != 0) {
+    if (fetchstr(pathaddr, path, MAXPATH) >= 0) {
+      if (p->pathname[0] == '\0') {
+        safestrcpy(p->pathname, path, MAXPATH);
+      }
+    }
+  }
 
-    return 0;
+  return 0;
 }

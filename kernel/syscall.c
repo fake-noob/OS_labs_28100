@@ -145,30 +145,21 @@ syscall(void)
     // --- SANDBOX LOGIC START ---
     if (p->mask & (1 << num)) {
       int allowed = 0;
-
+      
+      // If masked, block EVERYTHING...
+      // UNLESS it's open/exec AND the requested path EXACTLY matches the sandbox pathname.
       if (num == SYS_open || num == SYS_exec) {
-        int wildcard = (p->pathname[0] == '\0');
-        int dash     = (p->pathname[0] == '-' && p->pathname[1] == '\0');
-        
-        // "" allows both open and exec; "-" allows exec only so shells/binaries launch
-        if (wildcard || (dash && num == SYS_exec)) {
-          allowed = 1;
-        } else {
-          char path[MAXPATH];
-          if (argstr(0, path, MAXPATH) >= 0 &&
-              strncmp(path, p->pathname, MAXPATH) == 0) {
+        char path[MAXPATH];
+        if (argstr(0, path, MAXPATH) >= 0) {
+          if (strncmp(path, p->pathname, MAXPATH) == 0) {
             allowed = 1;
-          } else {
-            allowed = 0;
           }
         }
-      } else {
-        allowed = 0; // Non-path system calls in the mask are blocked
       }
 
       if (!allowed) {
         p->trapframe->a0 = -1;
-        return; // Block execution
+        return; // Block execution securely
       }
     }
     // --- SANDBOX LOGIC END ---
