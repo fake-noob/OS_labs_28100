@@ -149,12 +149,92 @@ walkaddr(pagetable_t pagetable, uint64 va)
 
 #if defined(LAB_PGTBL) || defined(SOL_MMAP) || defined(SOL_COW)
 void
+vmprint_walk(pagetable_t pagetable, int level, uint64 va)
+{
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      uint64 next_va = va | ((uint64)i << (12 + 9 * level));
+      for(int j = 0; j < 3 - level; j++) printk(" ..");
+      
+      uint64 pa = PTE2PA(pte);
+      printk("%p: pte %p pa %p", (void*)next_va, (void*)pte, (void*)pa);
+      
+      // Leaf if R, W, or X is set
+      if((pte & (PTE_R | PTE_W | PTE_X)) != 0){
+        printk(" ");
+        if(pte & PTE_R) printk("R");
+        if(pte & PTE_W) printk("W");
+        if(pte & PTE_X) printk("X");
+        if(pte & PTE_U) printk("U");
+      }
+      printk("\n");
+      
+      if((pte & (PTE_R | PTE_W | PTE_X)) == 0){
+        vmprint_walk((pagetable_t)pa, level - 1, next_va);
+      }
+    }
+  }
+}
+
+void
 vmprint(pagetable_t pagetable)
 {
-  // your code here
+  printk("page table %p\n", pagetable);
+  vmprint_walk(pagetable, 2, 0);
 }
 #endif
 
+
+// Kernel-specific mappages that attempts to use 2MB superpages (level 1 leaves)
+int
+kvmmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, last;
+  pte_t *pte;
+
+  if ((va % PGSIZE) != 0) panic("kvmmappages: va not aligned");
+  if ((size % PGSIZE) != 0) panic("kvmmappages: size not aligned");
+  if (size == 0) panic("kvmmappages: size");
+
+  a = va;
+  last = va + size - PGSIZE;
+  for (;;) {
+    // 0x200000 is 2MB. Check if va and pa are 2MB aligned, and we have at least 2MB left to map
+    if ((a % 0x200000) == 0 && (pa % 0x200000) == 0 && (last - a + PGSIZE) >= 0x200000) {
+      // Walk to level 2 to get/create the level 1 page table
+      pte_t *pte2 = &pagetable[PX(2, a)];
+      if ((*pte2 & PTE_V) == 0) {
+        pagetable_t newpt = (pagetable_t)kalloc();
+        if (newpt == 0) return -1;
+        memset(newpt, 0, PGSIZE);
+        *pte2 = PA2PTE(newpt) | PTE_V;
+      }
+      
+      pagetable_t pt1 = (pagetable_t)PTE2PA(*pte2);
+      pte = &pt1[PX(1, a)]; // Get the level 1 entry
+      
+      if (*pte & PTE_V) panic("kvmmappages: remap superpage");
+      *pte = PA2PTE(pa) | perm | PTE_V; // Mark as valid leaf!
+
+      if (a + 0x200000 - PGSIZE >= last) break;
+      a += 0x200000;
+      pa += 0x200000;
+    } else {
+      // Fallback to standard 4KB pages
+      if ((pte = walk(pagetable, a, 1)) == 0)
+        return -1;
+      if (*pte & PTE_V)
+        panic("kvmmappages: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V;
+      
+      if (a == last) break;
+      a += PGSIZE;
+      pa += PGSIZE;
+    }
+  }
+  return 0;
+}
 
 // add a mapping to the kernel page table.
 // only used when booting.
@@ -162,7 +242,7 @@ vmprint(pagetable_t pagetable)
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+  if (kvmmappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 

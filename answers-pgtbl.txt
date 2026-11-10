@@ -1,0 +1,56 @@
+Answers for Lab: page tables
+
+Inspect a user-process page table:
+
+The print_pgtbl() function prints the page-table entries for the first 10 and last 10 pages
+of the pgtbltest process:
+
+va 0x0          pte 0x21FDF85B pa 0x87F7E000 perm 0x5B
+va 0x1000       pte 0x21FDEC1B pa 0x87F7B000 perm 0x1B
+va 0x2000       pte 0x21FDE817 pa 0x87F7A000 perm 0x17
+va 0x3000       pte 0x21FDE407 pa 0x87F79000 perm 0x7
+va 0x4000       pte 0x21FDE0D7 pa 0x87F78000 perm 0xD7
+va 0x5000       pte 0x0        pa 0x0        perm 0x0
+...
+va 0x3FFFFFD000 pte 0x21FEC413 pa 0x87FB1000 perm 0x13
+va 0x3FFFFFE000 pte 0x21FE7CC7 pa 0x87F9F000 perm 0xC7
+va 0x3FFFFFF000 pte 0x20001C4B pa 0x80007000 perm 0x4B
+
+Explanation of logical contents and permissions:
+
+1. va 0x0 (perm 0x5B = PTE_V | PTE_R | PTE_X | PTE_U | PTE_A):
+   User text (code) page containing executable program instructions. It is readable,
+   executable, and accessible in user mode. PTE_A indicates it has been accessed by CPU execution.
+
+2. va 0x1000 (perm 0x1B = PTE_V | PTE_R | PTE_X | PTE_U):
+   Second user text (code) page. The pgtbltest binary exceeds 4KB, so code spans into
+   this second page. It is user accessible, readable, and executable.
+
+3. va 0x2000 (perm 0x17 = PTE_V | PTE_R | PTE_W | PTE_U):
+   User data/bss page. Contains global variables and initialized data. It is readable,
+   writable, and user-accessible, but not executable.
+
+4. va 0x3000 (perm 0x7 = PTE_V | PTE_R | PTE_W):
+   Stack guard page. Allocated by exec() directly below the user stack with PTE_U cleared.
+   Inaccessible to user mode; prevents user stack overflow from corrupting data.
+
+5. va 0x4000 (perm 0xD7 = PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D):
+   User stack page. Holds local variables and function call frames. Marked user accessible,
+   readable, and writable. PTE_A (accessed) and PTE_D (dirty) are set because the process has written
+   to its stack.
+
+6. va 0x5000 to 0x3FFFFFC000:
+   Unmapped address space. Heap memory grows into this range from 0x5000 when sbrk() is called.
+
+7. va 0x3FFFFFD000 (USYSCALL) (perm 0x13 = PTE_V | PTE_R | PTE_U):
+   Shared USYSCALL page. Mapped read-only for user mode to allow fast getpid() without
+   kernel trap crossings.
+
+8. va 0x3FFFFFE000 (TRAPFRAME) (perm 0xC7 = PTE_V | PTE_R | PTE_W | PTE_A | PTE_D):
+   Trapframe page. Holds saved user registers during traps into the kernel. Marked valid,
+   readable, and writable, but PTE_U is 0 (kernel-only access).
+
+9. va 0x3FFFFFF000 (TRAMPOLINE) (perm 0x4B = PTE_V | PTE_R | PTE_X | PTE_A):
+   Trampoline page. Contains code to switch between user and kernel page tables on traps.
+   Mapped at the highest page in both user and kernel address spaces. Marked executable and readable,
+   kernel access only (PTE_U is 0).

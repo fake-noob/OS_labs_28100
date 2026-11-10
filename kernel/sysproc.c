@@ -43,27 +43,12 @@ uint64
 sys_sbrk(void)
 {
   uint64 addr;
-  int t;
   int n;
 
   argint(0, &n);
-  argint(1, &t);
   addr = myproc()->sz;
-
-  if (t == SBRK_EAGER || n < 0) {
-    if (growproc(n) < 0) {
-      return -1;
-    }
-  } else {
-    // Lazily allocate memory for this process: increase its memory
-    // size but don't allocate memory. If the processes uses the
-    // memory, vmfault() will allocate it.
-    if (addr + n < addr)
-      return -1;
-    if (addr + n > UTOP)
-      return -1;
-    myproc()->sz += n;
-  }
+  if (growproc(n) < 0)
+    return -1;
   return addr;
 }
 
@@ -107,10 +92,45 @@ sys_vmprint(void)
 #endif
 
 #ifdef LAB_PGTBL
-int
+uint64
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 base_va;
+  int npages;
+  uint64 user_buffer;
+
+  argaddr(0, &base_va);
+  argint(1, &npages);
+  argaddr(2, &user_buffer);
+
+  if(npages < 0 || npages > 64)
+    return -1;
+
+  uint64 bitmask = 0; 
+  struct proc *p = myproc();
+
+  for(int i = 0; i < npages; i++){
+    uint64 va = base_va + i * PGSIZE;
+    
+    if(va >= MAXVA)
+      return -1;
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    // Return -1 if a checked page isn't mapped
+    if(pte == 0 || (*pte & PTE_V) == 0){
+      return -1;
+    }
+
+    if(*pte & PTE_A){
+      bitmask |= (1ULL << i);
+      *pte &= ~PTE_A; // Clear the hardware accessed bit
+    }
+  }
+
+  if(copyout(p->pagetable, p->sz, user_buffer, (char *)&bitmask, sizeof(bitmask)) < 0)
+    return -1;
+
   return 0;
 }
 #endif
