@@ -1,0 +1,43 @@
+Answers for Lab: traps
+
+1. Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+In RISC-V calling conventions, function arguments are passed in registers a0 through a7 (a0, a1, a2, a3, a4, a5, a6, a7).
+In main's call to printf:
+- a0 holds the format string address ("%d %d\n")
+- a1 holds 12 (the result of f(8) + 1)
+- a2 holds 13 (loaded via 'li a2, 13')
+
+2. Where is the call to function f in the assembly code for main? Where is the call to g?
+The compiler inlined both functions f and g into main. The compiler evaluated the constant expression (8 + 3) + 1 = 12 at compile time and directly loaded the value 12 into register a1 using 'li a1, 12'. Therefore, no jal/jalr calls to f or g appear in the assembly code for main.
+
+3. At what address is the function printf located?
+The printf function is located at address 0x746 (as indicated by 'jal 746 <printf>').
+
+4. What value is in the register ra just after the jalr to printf in main?
+The jal instruction saves the address of the next instruction (PC + 4) into the link register ra. The instruction immediately following 'jal 746 <printf>' (at 0x38) is 'li a0, 0' at address 0x3c. Therefore, ra contains 0x3c.
+
+5. Endianness:
+unsigned int i = 0x00646c72;
+printf("H%x Wo%s", 57616, (char *) &i);
+
+What is the output?
+The output is "He110 World".
+Explanation:
+- 57616 in hexadecimal is 0xE110, so "H%x" outputs "He110".
+- In little-endian RISC-V, the integer 0x00646c72 is laid out in byte memory as:
+  Byte 0: 0x72 ('r')
+  Byte 1: 0x6c ('l')
+  Byte 2: 0x64 ('d')
+  Byte 3: 0x00 ('\0')
+  Printing (char *)&i as %s produces "rld", giving "He110 World".
+
+If the RISC-V were instead big-endian, what would you set i to in order to yield the same output?
+In big-endian, the most significant byte is stored at the lowest memory address. To have 'r' (0x72) at byte 0, 'l' (0x6c) at byte 1, 'd' (0x64) at byte 2, and '\0' (0x00) at byte 3, i would need to be set to 0x726c6400.
+
+Would you need to change 57616 to a different value?
+No. Endianness only affects byte storage ordering in memory, not the numerical value of integers stored in registers. 57616 is passed as a register value and formatted as hex (%x), which is always e110.
+
+6. printf("x=%d y=%d", 3);
+What is going to be printed after 'y='? Why does this happen?
+A garbage / stale value from register a2 will be printed.
+printf expects its format string in a0, the first argument in a1, and the second argument in a2. Because the caller only provided one argument (3 in a1), register a2 was never loaded with a second value, so printf prints whatever value happened to be leftover in register a2 prior to the call.
