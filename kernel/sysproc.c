@@ -103,32 +103,30 @@ sys_pgaccess(void)
   argint(1, &npages);
   argaddr(2, &user_buffer);
 
-  if(npages < 0 || npages > 64)
+  if (npages <= 0 || npages > 512)
+    return -1;
+  if (base_va >= MAXVA || base_va + (uint64)npages * PGSIZE > MAXVA)
     return -1;
 
-  uint64 bitmask = 0; 
+  char mask[64];
+  memset(mask, 0, sizeof(mask));
   struct proc *p = myproc();
 
-  for(int i = 0; i < npages; i++){
-    uint64 va = base_va + i * PGSIZE;
-    
-    if(va >= MAXVA)
-      return -1;
-
+  for (int i = 0; i < npages; i++) {
+    uint64 va = base_va + (uint64)i * PGSIZE;
     pte_t *pte = walk(p->pagetable, va, 0);
 
-    // Return -1 if a checked page isn't mapped
-    if(pte == 0 || (*pte & PTE_V) == 0){
+    if (pte == 0 || (*pte & PTE_V) == 0)
       return -1;
-    }
 
-    if(*pte & PTE_A){
-      bitmask |= (1ULL << i);
-      *pte &= ~PTE_A; // Clear the hardware accessed bit
+    if (*pte & PTE_A) {
+      mask[i / 8] |= (1 << (i % 8));
+      *pte &= ~PTE_A;
     }
   }
 
-  if(copyout(p->pagetable, p->sz, user_buffer, (char *)&bitmask, sizeof(bitmask)) < 0)
+  int bytes = (npages + 7) / 8;
+  if (copyout(p->pagetable, p->sz, user_buffer, mask, bytes) < 0)
     return -1;
 
   return 0;
