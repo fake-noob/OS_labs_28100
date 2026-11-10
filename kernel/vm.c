@@ -301,7 +301,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
@@ -310,14 +309,18 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char *)pa, PGSIZE);
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
+
+    if (flags & PTE_W) {
+      flags = (flags & ~PTE_W) | PTE_COW;
+      *pte = PA2PTE(pa) | flags;
+    }
+
+    if (mappages(new, i, PGSIZE, pa, flags) != 0) {
       goto err;
     }
+    incref((void *)pa);
   }
+  sfence_vma();
   return 0;
 
 err:
@@ -360,9 +363,18 @@ copyout(pagetable_t pagetable, uint64 psz, uint64 dstva, char *src, uint64 len)
     }
 
     pte = walk(pagetable, va0, 0);
-    // forbid copyout over read-only user text pages.
-    if ((*pte & PTE_W) == 0)
+    if (pte == 0)
       return -1;
+
+    // forbid copyout over read-only user text pages.
+    if ((*pte & PTE_W) == 0) {
+      if (*pte & PTE_COW) {
+        if ((pa0 = cowfault(pagetable, va0)) == 0)
+          return -1;
+      } else {
+        return -1;
+      }
+    }
 
     n = PGSIZE - (dstva - va0);
     if (n > len)
@@ -451,6 +463,41 @@ copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
   }
 }
 
+uint64
+cowfault(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA)
+    return 0;
+
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte == 0)
+    return 0;
+  if ((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+    return 0;
+  if ((*pte & PTE_COW) == 0)
+    return 0;
+
+  uint64 pa = PTE2PA(*pte);
+
+  if (kref((void *)pa) == 1) {
+    *pte = (PA2PTE(pa) | (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
+    sfence_vma();
+    return pa;
+  }
+
+  char *mem = kalloc();
+  if (mem == 0)
+    return 0;
+
+  memmove(mem, (char *)pa, PGSIZE);
+
+  kfree((void *)pa);
+
+  *pte = PA2PTE(mem) | (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+  sfence_vma();
+  return (uint64)mem;
+}
+
 // allocate and map user memory if process is referencing a page
 // that was lazily allocated in sys_sbrk().
 // returns 0 if va is invalid or already mapped, or if
@@ -460,12 +507,23 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
 {
   uint64 mem;
 
-  if (va >= psz)
+  if (va >= MAXVA)
     return 0;
+
   va = PGROUNDDOWN(va);
   if (ismapped(pagetable, va)) {
+    if (read == 0) {
+      pte_t *pte = walk(pagetable, va, 0);
+      if (pte && (*pte & PTE_V) && (*pte & PTE_COW)) {
+        return cowfault(pagetable, va);
+      }
+    }
     return 0;
   }
+
+  if (va >= psz)
+    return 0;
+
   mem = (uint64)kalloc();
   if (mem == 0)
     return 0;
