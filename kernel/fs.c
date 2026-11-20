@@ -54,13 +54,16 @@ bzero(int dev, int bno)
 {
   struct buf *bp;
 
-  bp = bread(dev, bno);
+  bp = bget(dev, bno);
   memset(bp->data, 0, BSIZE);
+  bp->valid = 1;
   log_write(bp);
   brelse(bp);
 }
 
 // Blocks.
+
+static uint balloc_hint = 0;
 
 // Allocate a zeroed disk block.
 // returns 0 if out of disk space.
@@ -70,20 +73,34 @@ balloc(uint dev)
   int b, bi, m;
   struct buf *bp;
 
-  bp = 0;
-  for (b = 0; b < sb.size; b += BPB) {
-    bp = bread(dev, BBLOCK(b, sb));
-    for (bi = 0; bi < BPB && b + bi < sb.size; bi++) {
-      m = 1 << (bi % 8);
-      if ((bp->data[bi / 8] & m) == 0) { // Is block free?
-        bp->data[bi / 8] |= m;           // Mark block in use.
-        log_write(bp);
-        brelse(bp);
-        bzero(dev, b + bi);
-        return b + bi;
+  if (balloc_hint >= sb.size)
+    balloc_hint = 0;
+
+  uint start_b = (balloc_hint / BPB) * BPB;
+  for (int pass = 0; pass < 2; pass++) {
+    uint from = (pass == 0) ? start_b : 0;
+    uint to = (pass == 0) ? sb.size : (start_b + BPB <= sb.size ? start_b + BPB : sb.size);
+    for (b = from; b < to; b += BPB) {
+      bp = bread(dev, BBLOCK(b, sb));
+      int start_bi = (pass == 0 && b == start_b) ? (balloc_hint % BPB) : 0;
+      start_bi = (start_bi / 8) * 8; // byte align
+      for (bi = start_bi; bi < BPB && b + bi < sb.size; bi += 8) {
+        if ((uchar)bp->data[bi / 8] == 0xff)
+          continue;
+        for (int bj = 0; bj < 8 && b + bi + bj < sb.size; bj++) {
+          m = 1 << bj;
+          if ((bp->data[bi / 8] & m) == 0) { // Is block free?
+            bp->data[bi / 8] |= m;           // Mark block in use.
+            log_write(bp);
+            brelse(bp);
+            bzero(dev, b + bi + bj);
+            balloc_hint = b + bi + bj + 1;
+            return b + bi + bj;
+          }
+        }
       }
+      brelse(bp);
     }
-    brelse(bp);
   }
   printk("balloc: out of blocks\n");
   return 0;
@@ -104,6 +121,8 @@ bfree(int dev, uint b)
   bp->data[bi / 8] &= ~m;
   log_write(bp);
   brelse(bp);
+  if (b < balloc_hint)
+    balloc_hint = b;
 }
 
 // Inodes.
@@ -454,6 +473,45 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
+
+  if (bn < NDINDIRECT) {
+    // Load doubly-indirect block, allocating if necessary.
+    if ((addr = ip->addrs[NDIRECT + 1]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr == 0)
+        return 0;
+      ip->addrs[NDIRECT + 1] = addr;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint *)bp->data;
+
+    uint idx1 = bn / NINDIRECT;
+    uint idx2 = bn % NINDIRECT;
+    uint indir_addr = a[idx1];
+    if (indir_addr == 0) {
+      indir_addr = balloc(ip->dev);
+      if (indir_addr == 0) {
+        brelse(bp);
+        return 0;
+      }
+      a[idx1] = indir_addr;
+      log_write(bp);
+    }
+    brelse(bp);
+
+    struct buf *bp2 = bread(ip->dev, indir_addr);
+    uint *a2 = (uint *)bp2->data;
+    if ((addr = a2[idx2]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr) {
+        a2[idx2] = addr;
+        log_write(bp2);
+      }
+    }
+    brelse(bp2);
+    return addr;
+  }
 
   panic("bmap: out of range");
 }
@@ -463,9 +521,9 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;
+  struct buf *bp, *bp2;
+  uint *a, *a2;
 
   for (i = 0; i < NDIRECT; i++) {
     if (ip->addrs[i]) {
@@ -484,6 +542,26 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if (ip->addrs[NDIRECT + 1]) {
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint *)bp->data;
+    for (j = 0; j < NINDIRECT; j++) {
+      if (a[j]) {
+        bp2 = bread(ip->dev, a[j]);
+        a2 = (uint *)bp2->data;
+        for (k = 0; k < NINDIRECT; k++) {
+          if (a2[k])
+            bfree(ip->dev, a2[k]);
+        }
+        brelse(bp2);
+        bfree(ip->dev, a[j]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;

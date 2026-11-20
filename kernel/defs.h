@@ -13,6 +13,7 @@ struct superblock;
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
+struct buf*     bget(uint, uint);
 void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
@@ -66,6 +67,7 @@ void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
 void            begin_op(void);
 void            end_op(void);
+void            log_flush(void);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);

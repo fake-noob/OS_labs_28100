@@ -136,11 +136,20 @@ begin_op(void)
       sleep();
       acquire(&log.lock);
     } else if (log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS > LOGBLOCKS) {
-      // this op might exhaust log space; wait for commit.
-      sleep_prepare(&log);
-      release(&log.lock);
-      sleep();
-      acquire(&log.lock);
+      if (log.outstanding == 0) {
+        log.committing = 1;
+        release(&log.lock);
+        commit();
+        acquire(&log.lock);
+        log.committing = 0;
+        log.ncommit += 1;
+        wakeup(&log);
+      } else {
+        sleep_prepare(&log);
+        release(&log.lock);
+        sleep();
+        acquire(&log.lock);
+      }
     } else {
       log.outstanding += 1;
       release(&log.lock);
@@ -160,7 +169,7 @@ end_op(void)
   log.outstanding -= 1;
   if (log.committing)
     panic("log.committing");
-  if (log.outstanding == 0) {
+  if (log.outstanding == 0 && (log.lh.n + MAXOPBLOCKS > LOGBLOCKS || log.committing)) {
     do_commit = 1;
     log.committing = 1;
   } else {
@@ -181,6 +190,22 @@ end_op(void)
     wakeup(&log);
     release(&log.lock);
   }
+}
+
+void
+log_flush(void)
+{
+  acquire(&log.lock);
+  if (log.lh.n > 0 && log.outstanding == 0 && !log.committing) {
+    log.committing = 1;
+    release(&log.lock);
+    commit();
+    acquire(&log.lock);
+    log.committing = 0;
+    log.ncommit += 1;
+    wakeup(&log);
+  }
+  release(&log.lock);
 }
 
 // Copy modified blocks from cache to log.
