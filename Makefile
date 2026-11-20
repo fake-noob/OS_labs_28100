@@ -32,6 +32,11 @@ OBJS = \
   $K/plic.o \
   $K/virtio_disk.o
 
+ifeq ($(LAB),pgtbl)
+OBJS += \
+	$K/stats.o
+endif
+
 OBJS_KCSAN = \
   $K/start.o \
   $K/console.o \
@@ -53,7 +58,7 @@ endif
 
 ifeq ($(LAB),net)
 OBJS += \
-	$K/e1000.o \
+	$K/tulip.o \
 	$K/net.o \
 	$K/pci.o
 endif
@@ -322,12 +327,13 @@ FWDPORT2 = $(shell expr `id -u` % 5000 + 30999)
 
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
-QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
+# cache=unsafe: ignore VIRTIO_BLK_F_FLUSH to avoid that qemu fdatasyncs every write (bigfile/writebig time out in the fs lab).
+QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0,cache=unsafe
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
 ifeq ($(LAB),net)
 QEMUOPTS += -netdev user,id=net0,hostfwd=udp::$(FWDPORT1)-:2000,hostfwd=udp::$(FWDPORT2)-:2001 -object filter-dump,id=net0,netdev=net0,file=packets.pcap
-QEMUOPTS += -device e1000,netdev=net0,bus=pcie.0
+QEMUOPTS += -device tulip,netdev=net0,bus=pcie.0
 endif
 
 # makes a new fs.img
